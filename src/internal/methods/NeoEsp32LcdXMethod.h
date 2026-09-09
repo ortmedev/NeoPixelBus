@@ -552,7 +552,15 @@ public:
         
         uint8_t muxIdx = LCD_DATA_OUT0_IDX + _muxId;
         esp_rom_gpio_connect_out_signal(pin, muxIdx, invert, false);
+
+        // Arduino-ESP32 Core 3.x (ESP-IDF 5.x) no longer exposes
+        // gpio_hal_iomux_func_sel().  The ROM function performs the same
+        // GPIO-matrix selection on ESP32-S3 and remains available there.
+#if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
+        esp_rom_gpio_pad_select_gpio(pin);
+#else
         gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[pin], PIN_FUNC_GPIO);
+#endif
         gpio_set_drive_capability((gpio_num_t)pin, (gpio_drive_cap_t)3);
         return true;
     }
@@ -649,7 +657,9 @@ public:
         if (_data == nullptr)
         {
             log_e("front buffer memory allocation failure");
-            _bus.Destruct()
+            // The mux bus owns the LCD/GDMA context.  Deregistering this
+            // instance releases it when this was the final registered bus.
+            _bus.DeregisterMuxBus(_pin);
             return false;
         }
         return true;
