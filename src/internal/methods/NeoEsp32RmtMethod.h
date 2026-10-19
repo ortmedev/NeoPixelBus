@@ -59,6 +59,35 @@ extern "C"
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 #define NEOPIXELBUS_ESP32_RMT_DRIVER_NG 1
 
+// The IDF 5 RMT driver refills non-DMA transmissions from an interrupt.  Radio
+// activity can delay that interrupt long enough for addressable LEDs to latch a
+// partial frame.  Use the highest FreeRTOS-compatible interrupt priority by
+// default, while keeping it configurable for applications with other needs.
+#ifndef NEOPIXELBUS_RMT_INTR_PRIORITY
+#define NEOPIXELBUS_RMT_INTR_PRIORITY 3
+#endif
+
+// Non-DMA channels share the peripheral's dedicated symbol memory.  One block
+// per channel preserves the maximum number of simultaneous RMT outputs.  A
+// single-channel application may override this with, for example,
+// SOC_RMT_TX_CANDIDATES_PER_GROUP * SOC_RMT_MEM_WORDS_PER_CHANNEL.
+#ifndef NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS
+#define NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS SOC_RMT_MEM_WORDS_PER_CHANNEL
+#endif
+
+#if defined(SOC_RMT_SUPPORT_DMA) && SOC_RMT_SUPPORT_DMA
+// On current ESP32 variants only one transmitter per RMT group can use DMA.
+// Reserve it for logical channel zero by default so multi-channel applications
+// continue to initialize.  Both the selected channel and its buffer size may be
+// overridden before including NeoPixelBus.h.
+#ifndef NEOPIXELBUS_RMT_DMA_CHANNEL
+#define NEOPIXELBUS_RMT_DMA_CHANNEL RMT_CHANNEL_0
+#endif
+#ifndef NEOPIXELBUS_RMT_DMA_BUFFER_SYMBOLS
+#define NEOPIXELBUS_RMT_DMA_BUFFER_SYMBOLS 512
+#endif
+#endif
+
 typedef rmt_symbol_word_t rmt_item32_t;
 typedef uint8_t rmt_idle_level_t;
 typedef uint8_t neopixelbus_rmt_channel_t;
@@ -675,16 +704,27 @@ public:
 #if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
         rmt_tx_channel_config_t channelConfig = {};
 
+#if defined(SOC_RMT_SUPPORT_DMA) && SOC_RMT_SUPPORT_DMA
+        const bool useDma = (_channel.RmtChannelNumber == NEOPIXELBUS_RMT_DMA_CHANNEL);
+#else
+        const bool useDma = false;
+#endif
+
         channelConfig.gpio_num = static_cast<gpio_num_t>(_pin);
         channelConfig.clk_src = RMT_CLK_SRC_DEFAULT;
         channelConfig.resolution_hz = T_SPEED::RmtResolutionHz();
-        channelConfig.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
+#if defined(SOC_RMT_SUPPORT_DMA) && SOC_RMT_SUPPORT_DMA
+        channelConfig.mem_block_symbols = useDma ?
+            NEOPIXELBUS_RMT_DMA_BUFFER_SYMBOLS : NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS;
+#else
+        channelConfig.mem_block_symbols = NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS;
+#endif
         channelConfig.trans_queue_depth = 1;
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 2)
-        channelConfig.intr_priority = 0;
+        channelConfig.intr_priority = NEOPIXELBUS_RMT_INTR_PRIORITY;
 #endif
         channelConfig.flags.invert_out = false;
-        channelConfig.flags.with_dma = false;
+        channelConfig.flags.with_dma = useDma;
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0)
         channelConfig.flags.io_loop_back = false;
         channelConfig.flags.io_od_mode = false;
