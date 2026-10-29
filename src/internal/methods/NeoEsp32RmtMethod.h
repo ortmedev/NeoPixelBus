@@ -46,13 +46,71 @@ Esp32-hal-rmt.c
 extern "C"
 {
 #include <rom/gpio.h>
+#include <esp_idf_version.h>
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#include <driver/rmt_encoder.h>
+#include <driver/rmt_tx.h>
+#include <soc/soc_caps.h>
+#else
 #include <driver/rmt.h>
+#endif
 }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#define NEOPIXELBUS_ESP32_RMT_DRIVER_NG 1
+
+// The IDF 5 RMT driver refills non-DMA transmissions from an interrupt.  Radio
+// activity can delay that interrupt long enough for addressable LEDs to latch a
+// partial frame.  Use the highest FreeRTOS-compatible interrupt priority by
+// default, while keeping it configurable for applications with other needs.
+#ifndef NEOPIXELBUS_RMT_INTR_PRIORITY
+#define NEOPIXELBUS_RMT_INTR_PRIORITY 3
+#endif
+
+// Non-DMA channels share the peripheral's dedicated symbol memory.  One block
+// per channel preserves the maximum number of simultaneous RMT outputs.  A
+// single-channel application may override this with, for example,
+// SOC_RMT_TX_CANDIDATES_PER_GROUP * SOC_RMT_MEM_WORDS_PER_CHANNEL.
+#ifndef NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS
+#define NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS SOC_RMT_MEM_WORDS_PER_CHANNEL
+#endif
+
+#if defined(SOC_RMT_SUPPORT_DMA) && SOC_RMT_SUPPORT_DMA
+// On current ESP32 variants only one transmitter per RMT group can use DMA.
+// Reserve it for logical channel zero by default so multi-channel applications
+// continue to initialize.  Both the selected channel and its buffer size may be
+// overridden before including NeoPixelBus.h.
+#ifndef NEOPIXELBUS_RMT_DMA_CHANNEL
+#define NEOPIXELBUS_RMT_DMA_CHANNEL RMT_CHANNEL_0
+#endif
+#ifndef NEOPIXELBUS_RMT_DMA_BUFFER_SYMBOLS
+#define NEOPIXELBUS_RMT_DMA_BUFFER_SYMBOLS 512
+#endif
+#endif
+
+typedef rmt_symbol_word_t rmt_item32_t;
+typedef uint8_t rmt_idle_level_t;
+typedef uint8_t neopixelbus_rmt_channel_t;
+
+static constexpr rmt_idle_level_t RMT_IDLE_LEVEL_LOW = 0;
+static constexpr rmt_idle_level_t RMT_IDLE_LEVEL_HIGH = 1;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_0 = 0;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_1 = 1;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_2 = 2;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_3 = 3;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_4 = 4;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_5 = 5;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_6 = 6;
+static constexpr neopixelbus_rmt_channel_t RMT_CHANNEL_7 = 7;
+#endif
+
+#if !defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0)
 #define NEOPIXELBUS_RMT_INT_FLAGS (ESP_INTR_FLAG_LOWMED)
 #else
 #define NEOPIXELBUS_RMT_INT_FLAGS (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_LEVEL1)
+#endif
+typedef rmt_channel_t neopixelbus_rmt_channel_t;
 #endif
 
 class NeoEsp32RmtSpeed
@@ -66,6 +124,16 @@ public:
     inline constexpr static uint32_t FromNs(uint32_t ns)
     {
         return ns / NsPerRmtTick;
+    }
+
+    inline constexpr static uint32_t RmtResolutionHz()
+    {
+        return RmtTicksPerSecond;
+    }
+
+    inline constexpr static uint32_t ToUs(uint32_t ticks)
+    {
+        return (ticks * NsPerRmtTick + 999) / 1000;
     }
 
 protected:
@@ -483,7 +551,7 @@ class NeoEsp32RmtChannel0
 public:
     NeoEsp32RmtChannel0() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_0;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_0;
 };
 
 class NeoEsp32RmtChannel1
@@ -491,7 +559,7 @@ class NeoEsp32RmtChannel1
 public:
     NeoEsp32RmtChannel1() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_1;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_1;
 };
 
 class NeoEsp32RmtChannel2
@@ -499,7 +567,7 @@ class NeoEsp32RmtChannel2
 public:
     NeoEsp32RmtChannel2() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_2;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_2;
 };
 
 class NeoEsp32RmtChannel3
@@ -507,7 +575,7 @@ class NeoEsp32RmtChannel3
 public:
     NeoEsp32RmtChannel3() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_3;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_3;
 };
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -517,7 +585,7 @@ class NeoEsp32RmtChannel4
 public:
     NeoEsp32RmtChannel4() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_4;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_4;
 };
 
 class NeoEsp32RmtChannel5
@@ -525,7 +593,7 @@ class NeoEsp32RmtChannel5
 public:
     NeoEsp32RmtChannel5() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_5;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_5;
 };
 
 class NeoEsp32RmtChannel6
@@ -533,7 +601,7 @@ class NeoEsp32RmtChannel6
 public:
     NeoEsp32RmtChannel6() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_6;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_6;
 };
 
 class NeoEsp32RmtChannel7
@@ -541,7 +609,7 @@ class NeoEsp32RmtChannel7
 public:
     NeoEsp32RmtChannel7() {};
 
-    const static rmt_channel_t RmtChannelNumber = RMT_CHANNEL_7;
+    const static neopixelbus_rmt_channel_t RmtChannelNumber = RMT_CHANNEL_7;
 };
 
 #endif
@@ -551,12 +619,12 @@ class NeoEsp32RmtChannelN
 {
 public:
     NeoEsp32RmtChannelN(NeoBusChannel channel) :
-        RmtChannelNumber(static_cast<rmt_channel_t>(channel))
+        RmtChannelNumber(static_cast<neopixelbus_rmt_channel_t>(channel))
     {
     }
     NeoEsp32RmtChannelN() = delete; // no default constructor
 
-    const rmt_channel_t RmtChannelNumber;
+    const neopixelbus_rmt_channel_t RmtChannelNumber;
 };
 
 template<typename T_SPEED, typename T_CHANNEL> class NeoEsp32RmtMethodBase
@@ -566,19 +634,34 @@ public:
 
     NeoEsp32RmtMethodBase(uint8_t pin, uint16_t pixelCount, size_t elementSize, size_t settingsSize)  :
         _sizeData(pixelCount * elementSize + settingsSize),
-        _pin(pin)
+        _pin(pin),
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        _txChannel(nullptr),
+        _encoder(nullptr),
+#endif
+        _dataEditing(nullptr),
+        _dataSending(nullptr)
     {
     }
 
     NeoEsp32RmtMethodBase(uint8_t pin, uint16_t pixelCount, size_t elementSize, size_t settingsSize, NeoBusChannel channel) :
         _sizeData(pixelCount* elementSize + settingsSize),
         _pin(pin),
-        _channel(channel)
+        _channel(channel),
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        _txChannel(nullptr),
+        _encoder(nullptr),
+#endif
+        _dataEditing(nullptr),
+        _dataSending(nullptr)
     {
     }
 
     ~NeoEsp32RmtMethodBase()
     {
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        DeinitializeRmt();
+#else
         // wait until the last send finishes before destructing everything
         // arbitrary time out of 10 seconds
         ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_wait_tx_done(_channel.RmtChannelNumber, 10000 / portTICK_PERIOD_MS));
@@ -586,6 +669,7 @@ public:
         ESP_ERROR_CHECK(rmt_driver_uninstall(_channel.RmtChannelNumber));
 
         gpio_matrix_out(_pin, SIG_GPIO_OUT_IDX, false, false);
+#endif
         pinMode(_pin, INPUT);
 
         free(_dataEditing);
@@ -594,7 +678,11 @@ public:
 
     bool IsReadyToUpdate() const
     {
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        return (_txChannel && ESP_OK == rmt_tx_wait_all_done(_txChannel, 0));
+#else
         return (ESP_OK == ESP_ERROR_CHECK_WITHOUT_ABORT_SILENT_TIMEOUT(rmt_wait_tx_done(_channel.RmtChannelNumber, 0)));
+#endif
     }
 
     bool Initialize()
@@ -613,6 +701,62 @@ public:
             return false;
         }
 
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        rmt_tx_channel_config_t channelConfig = {};
+
+#if defined(SOC_RMT_SUPPORT_DMA) && SOC_RMT_SUPPORT_DMA
+        const bool useDma = (_channel.RmtChannelNumber == NEOPIXELBUS_RMT_DMA_CHANNEL);
+#else
+        const bool useDma = false;
+#endif
+
+        channelConfig.gpio_num = static_cast<gpio_num_t>(_pin);
+        channelConfig.clk_src = RMT_CLK_SRC_DEFAULT;
+        channelConfig.resolution_hz = T_SPEED::RmtResolutionHz();
+#if defined(SOC_RMT_SUPPORT_DMA) && SOC_RMT_SUPPORT_DMA
+        channelConfig.mem_block_symbols = useDma ?
+            NEOPIXELBUS_RMT_DMA_BUFFER_SYMBOLS : NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS;
+#else
+        channelConfig.mem_block_symbols = NEOPIXELBUS_RMT_MEM_BLOCK_SYMBOLS;
+#endif
+        channelConfig.trans_queue_depth = 1;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 2)
+        channelConfig.intr_priority = NEOPIXELBUS_RMT_INTR_PRIORITY;
+#endif
+        channelConfig.flags.invert_out = false;
+        channelConfig.flags.with_dma = useDma;
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0)
+        channelConfig.flags.io_loop_back = false;
+        channelConfig.flags.io_od_mode = false;
+#endif
+        channelConfig.flags.allow_pd = false;
+        channelConfig.flags.init_level = T_SPEED::IdleLevel;
+
+        if (ESP_OK != rmt_new_tx_channel(&channelConfig, &_txChannel))
+        {
+            FreeBuffers();
+            return false;
+        }
+
+        rmt_bytes_encoder_config_t encoderConfig = {};
+        encoderConfig.bit0.val = T_SPEED::RmtBit0;
+        encoderConfig.bit1.val = T_SPEED::RmtBit1;
+        encoderConfig.flags.msb_first = true;
+
+        if (ESP_OK != rmt_new_bytes_encoder(&encoderConfig, &_encoder))
+        {
+            DeinitializeRmt();
+            FreeBuffers();
+            return false;
+        }
+
+        if (ESP_OK != rmt_enable(_txChannel))
+        {
+            DeinitializeRmt();
+            FreeBuffers();
+            return false;
+        }
+#else
         rmt_config_t config = {};
 
         config.rmt_mode = RMT_MODE_TX;
@@ -632,6 +776,7 @@ public:
         ESP_ERROR_CHECK(rmt_config(&config));
         ESP_ERROR_CHECK(rmt_driver_install(_channel.RmtChannelNumber, 0, NEOPIXELBUS_RMT_INT_FLAGS));
         ESP_ERROR_CHECK(rmt_translator_init(_channel.RmtChannelNumber, T_SPEED::Translate));
+#endif
         return true;
     }
 
@@ -640,21 +785,38 @@ public:
         // wait for not actively sending data
         // this will time out at 10 seconds, an arbitrarily long period of time
         // and do nothing if this happens
-        if (ESP_OK == ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_wait_tx_done(_channel.RmtChannelNumber, 10000 / portTICK_PERIOD_MS)))
+        if (ESP_OK == ESP_ERROR_CHECK_WITHOUT_ABORT(WaitTxDone(10000)))
         {
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+            delayMicroseconds(T_SPEED::ToUs(T_SPEED::RmtDurationReset));
+
+            rmt_transmit_config_t transmitConfig = {};
+            transmitConfig.loop_count = 0;
+            transmitConfig.flags.eot_level = T_SPEED::IdleLevel;
+            transmitConfig.flags.queue_nonblocking = false;
+
+            ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_encoder_reset(_encoder));
+            const esp_err_t transmitResult = ESP_ERROR_CHECK_WITHOUT_ABORT(
+                rmt_transmit(_txChannel, _encoder, _dataEditing, _sizeData, &transmitConfig));
+#else
             // now start the RMT transmit with the editing buffer before we swap
-            ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_write_sample(_channel.RmtChannelNumber, _dataEditing, _sizeData, false));
+            const esp_err_t transmitResult = ESP_ERROR_CHECK_WITHOUT_ABORT(
+                rmt_write_sample(_channel.RmtChannelNumber, _dataEditing, _sizeData, false));
+#endif
 
-            if (maintainBufferConsistency)
+            if (ESP_OK == transmitResult)
             {
-                // copy editing to sending,
-                // this maintains the contract that "colors present before will
-                // be the same after", otherwise GetPixelColor will be inconsistent
-                memcpy(_dataSending, _dataEditing, _sizeData);
-            }
+                if (maintainBufferConsistency)
+                {
+                    // copy editing to sending, 
+                    // this maintains the contract that "colors present before will
+                    // be the same after", otherwise GetPixelColor will be inconsistent
+                    memcpy(_dataSending, _dataEditing, _sizeData);
+                }
 
-            // swap so the user can modify without affecting the async operation
-            std::swap(_dataSending, _dataEditing);
+                // swap so the user can modify without affecting the async operation
+                std::swap(_dataSending, _dataEditing);
+            }
         }
     }
 
@@ -685,9 +847,50 @@ public:
     }
 
 private:
+    esp_err_t WaitTxDone(uint32_t timeoutMs) const
+    {
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        return _txChannel ? rmt_tx_wait_all_done(_txChannel, timeoutMs) : ESP_ERR_INVALID_STATE;
+#else
+        return rmt_wait_tx_done(_channel.RmtChannelNumber, timeoutMs / portTICK_PERIOD_MS);
+#endif
+    }
+
+    void DeinitializeRmt()
+    {
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+        if (_txChannel)
+        {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_tx_wait_all_done(_txChannel, 10000));
+            ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_disable(_txChannel));
+            ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_del_channel(_txChannel));
+            _txChannel = nullptr;
+        }
+
+        if (_encoder)
+        {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_del_encoder(_encoder));
+            _encoder = nullptr;
+        }
+#endif
+    }
+
+    void FreeBuffers()
+    {
+        free(_dataEditing);
+        _dataEditing = nullptr;
+        free(_dataSending);
+        _dataSending = nullptr;
+    }
+
     const size_t  _sizeData;      // Size of '_data*' buffers 
     const uint8_t _pin;            // output pin number
     const T_CHANNEL _channel; // holds instance for multi channel support
+
+#if defined(NEOPIXELBUS_ESP32_RMT_DRIVER_NG)
+    rmt_channel_handle_t _txChannel;
+    rmt_encoder_handle_t _encoder;
+#endif
 
     // Holds data stream which include LED color values and other settings as needed
     uint8_t*  _dataEditing;   // exposed for get and set
